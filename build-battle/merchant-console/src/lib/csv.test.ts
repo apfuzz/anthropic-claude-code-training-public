@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest"
 import { Payment } from "@/data/types"
-import { EXPORT_COLUMNS, exportFilename, toCsv } from "./csv"
+import {
+  DEFAULT_EXPORT_COLUMNS,
+  EXPORT_COLUMNS,
+  exportFilename,
+  parseExportColumns,
+  parseExportScope,
+  toCsv,
+} from "./csv"
 
 /**
  * The export is the file ops hands to a merchant, so a broken cell is a
@@ -81,5 +88,57 @@ describe("exportFilename", () => {
     expect(exportFilename(new Date("2026-03-14T23:00:00.000Z"))).toBe(
       "payments-2026-03-14.csv",
     )
+  })
+
+  it("puts the scope label before the date", () => {
+    expect(exportFilename(new Date("2026-03-14T23:00:00.000Z"), "disputed")).toBe(
+      "payments-disputed-2026-03-14.csv",
+    )
+  })
+})
+
+describe("column selection (NWP-101)", () => {
+  it("writes a subset of columns in the requested order, not the default order", () => {
+    const columns = parseExportColumns("amount,currency,id")
+    expect(columns).toEqual(["amount", "currency", "id"])
+    expect(toCsv([payment], columns!)).toBe(
+      ["amount,currency,id", "$250.00,USD,pay_0001"].join("\n"),
+    )
+  })
+
+  it("leaves the card last four out by default", () => {
+    expect(DEFAULT_EXPORT_COLUMNS).not.toContain("last4")
+    const columns = parseExportColumns(null)
+    expect(columns).toEqual(DEFAULT_EXPORT_COLUMNS)
+
+    const [header, row] = toCsv([payment], columns!).split("\n")
+    expect(header.split(",")).not.toContain("last4")
+    expect(row).not.toContain("4242")
+  })
+
+  it("includes the last four only when explicitly requested", () => {
+    expect(parseExportColumns("id,last4")).toEqual(["id", "last4"])
+  })
+
+  it("rejects an empty selection instead of producing an empty file", () => {
+    expect(parseExportColumns("")).toBeNull()
+    expect(parseExportColumns(" , ,")).toBeNull()
+  })
+
+  it("rejects the whole request if any column is outside the allowlist", () => {
+    expect(parseExportColumns("id,card_number")).toBeNull()
+    expect(parseExportColumns("id,__proto__")).toBeNull()
+  })
+
+  it("collapses duplicates and keeps first-seen order", () => {
+    expect(parseExportColumns("status, id ,status")).toEqual(["status", "id"])
+  })
+})
+
+describe("parseExportScope", () => {
+  it("defaults to the current filter and allowlists the rest", () => {
+    expect(parseExportScope(null)).toBe("filtered")
+    expect(parseExportScope("all")).toBe("all")
+    expect(parseExportScope("everything")).toBeNull()
   })
 })

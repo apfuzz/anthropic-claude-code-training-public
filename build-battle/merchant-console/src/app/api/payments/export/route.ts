@@ -1,25 +1,59 @@
 import { filterPayments, parseFilters, sortPayments } from "@/data/queries"
-import { exportFilename, toCsv } from "@/lib/csv"
-import { NextRequest } from "next/server"
+import {
+  exportFilename,
+  parseExportColumns,
+  parseExportScope,
+  toCsv,
+} from "@/lib/csv"
+import { NextRequest, NextResponse } from "next/server"
+
+function badRequest(message: string) {
+  return NextResponse.json({ error: { message } }, { status: 400 })
+}
 
 /**
- * Exports the payments table as CSV.
+ * Exports payments as CSV.
  *
- * Honors the active filters and reuses the query builder, but the column set
- * and the scope are fixed. Giving ops control over both is NWP-101.
+ * `scope` is `filtered` (default, honors the active filters) or `all`.
+ * `columns` is a comma-separated allowlisted list; absent means every column
+ * except the card last four. Both go through the shared query builder.
  */
 export function GET(request: NextRequest) {
-  const filters = parseFilters(request.nextUrl.searchParams)
+  const params = request.nextUrl.searchParams
+
+  const scope = parseExportScope(params.get("scope"))
+  if (!scope) return badRequest("Unknown export scope.")
+
+  const columns = parseExportColumns(params.get("columns"))
+  if (!columns) return badRequest("Choose at least one valid column to export.")
+
+  const requested = parseFilters(params)
+  const filters =
+    scope === "all"
+      ? {
+          ...parseFilters(new URLSearchParams()),
+          sort: requested.sort,
+          direction: requested.direction,
+        }
+      : requested
+
   const rows = sortPayments(
     filterPayments(filters),
     filters.sort,
     filters.direction,
   )
 
-  return new Response(toCsv(rows), {
+  const label =
+    scope === "all"
+      ? "all"
+      : filters.status && filters.status !== "all"
+        ? filters.status
+        : "filtered"
+
+  return new Response(toCsv(rows, columns), {
     headers: {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="${exportFilename()}"`,
+      "content-disposition": `attachment; filename="${exportFilename(new Date(), label)}"`,
     },
   })
 }
